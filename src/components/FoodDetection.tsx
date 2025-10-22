@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import { Loader2, CheckCircle, Plus, Trash2 } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Loader2, CheckCircle, Plus, Trash2, AlertCircle } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 
 interface DetectedFood {
   id: string;
@@ -9,6 +10,7 @@ interface DetectedFood {
   protein: number;
   carbs: number;
   fat: number;
+  notInDatabase?: boolean;
 }
 
 interface FoodDetectionProps {
@@ -21,32 +23,54 @@ export function FoodDetection({ imageUrl, onFoodConfirmed, onCancel }: FoodDetec
   const [detecting, setDetecting] = useState(true);
   const [detectedFoods, setDetectedFoods] = useState<DetectedFood[]>([]);
   const [customFood, setCustomFood] = useState({ name: '', portionGrams: 100 });
+  const [error, setError] = useState<string | null>(null);
 
-  useState(() => {
-    setTimeout(() => {
-      setDetectedFoods([
-        {
-          id: '1',
-          name: 'Chicken Breast',
-          portionGrams: 150,
-          calories: 248,
-          protein: 46.5,
-          carbs: 0,
-          fat: 5.4
+  useEffect(() => {
+    detectFood();
+  }, [imageUrl]);
+
+  const detectFood = async () => {
+    try {
+      setDetecting(true);
+      setError(null);
+
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (!session) {
+        setError('Please sign in to use food detection');
+        setDetecting(false);
+        return;
+      }
+
+      const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/detect-food`;
+
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
         },
-        {
-          id: '2',
-          name: 'Broccoli',
-          portionGrams: 100,
-          calories: 34,
-          protein: 2.8,
-          carbs: 7,
-          fat: 0.4
-        }
-      ]);
+        body: JSON.stringify({ imageUrl }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to detect food');
+      }
+
+      const result = await response.json();
+
+      if (result.foods && result.foods.length > 0) {
+        setDetectedFoods(result.foods);
+      } else {
+        setError('No foods detected in the image. Please add foods manually below.');
+      }
+    } catch (err) {
+      console.error('Food detection error:', err);
+      setError('Failed to detect food. Please add foods manually.');
+    } finally {
       setDetecting(false);
-    }, 2000);
-  });
+    }
+  };
 
   const updatePortion = (id: string, grams: number) => {
     setDetectedFoods(foods => foods.map(food => {
@@ -116,22 +140,40 @@ export function FoodDetection({ imageUrl, onFoodConfirmed, onCancel }: FoodDetec
       <div className="p-6">
         {!detecting && (
           <>
+            {error && (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4 flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-yellow-800 font-medium">Detection Issue</p>
+                  <p className="text-yellow-700 text-sm mt-1">{error}</p>
+                </div>
+              </div>
+            )}
+
             <div className="flex items-center gap-2 mb-4">
               <CheckCircle className="w-5 h-5 text-emerald-500" />
               <h3 className="text-lg font-semibold text-gray-800">
-                Detected Foods
+                Detected Foods {detectedFoods.length > 0 && `(${detectedFoods.length})`}
               </h3>
             </div>
 
-            <div className="space-y-3 mb-6">
-              {detectedFoods.map(food => (
+            {detectedFoods.length > 0 && (
+              <div className="space-y-3 mb-6">
+                {detectedFoods.map(food => (
                 <div
                   key={food.id}
                   className="bg-gray-50 rounded-lg p-4 border border-gray-200"
                 >
                   <div className="flex items-start justify-between mb-3">
-                    <div>
-                      <h4 className="font-semibold text-gray-800">{food.name}</h4>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-semibold text-gray-800">{food.name}</h4>
+                        {food.notInDatabase && (
+                          <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">
+                            Not in DB
+                          </span>
+                        )}
+                      </div>
                       <p className="text-sm text-gray-600">
                         {food.calories} cal | P: {food.protein}g | C: {food.carbs}g | F: {food.fat}g
                       </p>
@@ -158,7 +200,8 @@ export function FoodDetection({ imageUrl, onFoodConfirmed, onCancel }: FoodDetec
                   </div>
                 </div>
               ))}
-            </div>
+              </div>
+            )}
 
             <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 mb-6">
               <div className="flex items-center gap-2 mb-2">
@@ -190,27 +233,29 @@ export function FoodDetection({ imageUrl, onFoodConfirmed, onCancel }: FoodDetec
               </div>
             </div>
 
-            <div className="bg-gradient-to-r from-emerald-500 to-teal-500 rounded-lg p-6 text-white mb-6">
-              <h4 className="font-semibold mb-4 text-lg">Total Nutrition</h4>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div>
-                  <p className="text-emerald-100 text-sm">Calories</p>
-                  <p className="text-2xl font-bold">{totalNutrition.calories}</p>
-                </div>
-                <div>
-                  <p className="text-emerald-100 text-sm">Protein</p>
-                  <p className="text-2xl font-bold">{totalNutrition.protein.toFixed(1)}g</p>
-                </div>
-                <div>
-                  <p className="text-emerald-100 text-sm">Carbs</p>
-                  <p className="text-2xl font-bold">{totalNutrition.carbs.toFixed(1)}g</p>
-                </div>
-                <div>
-                  <p className="text-emerald-100 text-sm">Fat</p>
-                  <p className="text-2xl font-bold">{totalNutrition.fat.toFixed(1)}g</p>
+            {detectedFoods.length > 0 && (
+              <div className="bg-gradient-to-r from-emerald-500 to-teal-500 rounded-lg p-6 text-white mb-6">
+                <h4 className="font-semibold mb-4 text-lg">Total Nutrition</h4>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div>
+                    <p className="text-emerald-100 text-sm">Calories</p>
+                    <p className="text-2xl font-bold">{totalNutrition.calories}</p>
+                  </div>
+                  <div>
+                    <p className="text-emerald-100 text-sm">Protein</p>
+                    <p className="text-2xl font-bold">{totalNutrition.protein.toFixed(1)}g</p>
+                  </div>
+                  <div>
+                    <p className="text-emerald-100 text-sm">Carbs</p>
+                    <p className="text-2xl font-bold">{totalNutrition.carbs.toFixed(1)}g</p>
+                  </div>
+                  <div>
+                    <p className="text-emerald-100 text-sm">Fat</p>
+                    <p className="text-2xl font-bold">{totalNutrition.fat.toFixed(1)}g</p>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
             <div className="flex gap-3">
               <button
@@ -221,7 +266,8 @@ export function FoodDetection({ imageUrl, onFoodConfirmed, onCancel }: FoodDetec
               </button>
               <button
                 onClick={() => onFoodConfirmed(detectedFoods)}
-                className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white font-medium py-3 rounded-lg transition"
+                disabled={detectedFoods.length === 0}
+                className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white font-medium py-3 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Save Meal
               </button>
